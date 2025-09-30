@@ -1,0 +1,524 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Zayan's Birthday — The Game</title>
+<style>
+body{margin:0;background:linear-gradient(180deg,#0d1b2a,#1b263b);color:#fff;font-family:"Segoe UI",Arial,system-ui;display:flex;align-items:center;justify-content:center;height:100vh}
+#gameWrap{width:95%;max-width:900px;background:rgba(0,0,0,0.7);border:2px solid #fff;border-radius:12px;padding:18px;box-shadow:0 8px 30px rgba(0,0,0,.6);display:flex;flex-direction:column;gap:16px}
+#name{color:#ffd166;font-weight:700;font-size:1.2rem}
+#text{min-height:120px;font-size:1.05rem;line-height:1.4;margin-top:6px}
+.controls{display:flex;gap:10px}
+button{background:#e94560;border:none;color:#fff;padding:9px 16px;border-radius:8px;cursor:pointer;font-size:1rem}
+button:hover{background:#ff4d6d}
+#gameCanvasWrap,#potatoRunWrap{display:none;flex-direction:column;gap:12px;align-items:center}
+canvas{background:#111;border:3px solid #333;border-radius:8px}
+.hud{display:flex;gap:14px;width:100%;justify-content:space-between;font-size:.9rem;color:#ddd}
+</style>
+</head>
+<body>
+<div id="gameWrap">
+  <div>
+    <div id="name">System</div>
+    <div id="text">Press Next to begin the birthday story.</div>
+  </div>
+  <div class="controls">
+    <button id="backBtn">Back</button>
+    <button id="nextBtn">Next</button>
+  </div>
+
+  <!-- Box Catch Game -->
+  <div id="gameCanvasWrap">
+    <div class="hud">
+      <span>Use ← → or A/D to move. Catch falling boxes.</span>
+      <span>Target: <span id="targetScore">15</span></span>
+    </div>
+    <canvas id="gameCanvas" width="480" height="320"></canvas>
+    <div class="hud">
+      <span>Score: <span id="score">0</span></span>
+      <span>Misses: <span id="misses">0</span>/8</span>
+      <span>
+        <button id="replayBtn" style="display:none">Replay</button>
+        <button id="returnStoryBtn" style="display:none">Return to story</button>
+      </span>
+    </div>
+  </div>
+
+  <!-- Potato Run Game -->
+  <div id="potatoRunWrap">
+    <div class="hud">
+      <span>Press SPACE to jump over potatoes!</span>
+      <span>Goal: <span id="potatoTarget">15</span></span>
+    </div>
+    <canvas id="potatoCanvas" width="480" height="240"></canvas>
+    <div class="hud">
+      <span>Dodged: <span id="potatoScore">0</span></span>
+      <span>
+        <button id="potatoReplay" style="display:none">Replay</button>
+        <button id="potatoReturn" style="display:none">Return to story</button>
+      </span>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ---------------- TYPEWRITER TEXT ---------------- */
+
+// single global typing interval so we can cancel previous incomplete typing
+let _typingInterval = null;
+let _isTyping = false;
+
+function typeText(el, text, onDone){
+  // clear previous typing if any
+  if(_typingInterval){
+    clearInterval(_typingInterval);
+    _typingInterval = null;
+  }
+  _isTyping = true;
+  // disable navigation while typing
+  nextBtn.disabled = true;
+  backBtn.disabled = true;
+
+  el.textContent = "";
+  let i = 0;
+  _typingInterval = setInterval(()=> {
+    // safety: if user jumped away and element no longer in DOM, stop
+    if(!el){
+      clearInterval(_typingInterval);
+      _typingInterval = null;
+      _isTyping = false;
+      if(onDone) onDone();
+      return;
+    }
+    el.textContent += text[i] ?? "";
+    i++;
+    if(i >= text.length){
+      clearInterval(_typingInterval);
+      _typingInterval = null;
+      _isTyping = false;
+      // re-enable navigation; caller may override
+      if(onDone) onDone();
+      // allow back/next depending on index later (caller will set correctly)
+    }
+  }, 20);
+}
+
+/* ---------------- STORY ---------------- */
+
+const story=[
+  {name:"System", text:"It’s Zayan’s birthday. Everyone’s gathering with… unusual gifts."},
+  {name:"Zayan (You)", text:"Alright, what did you all bring?"},
+  {name:"Ayan Shah", text:"I brought my kitchen table."},
+  {name:"Ayaan Asif", text:"Yo no way, I brought my kitchen sink."},
+  {name:"Ayan Shah", text:"Yooo no way."},
+  {name:"Osaka", text:"I brought some crumbs and the wrapper."},
+  {name:"Pablo", text:"Where’s the food that was IN the wrapper?"},
+  {name:"Osaka", text:"Oh… my computer ate it."},
+  {name:"Tahir", text:"potato?"},
+  {name:"Zayan (You)", text:"Anyone bring actual snacks?"},
+  {name:"Ayaan Asif", text:"Yeah… but I ate half on the way here. So there’s like, three chips left."},
+  {name:"System", text:"He brought out the cake but he only had 4 slices and there was 5 people."},
+  // Chaotic pre-game sequence
+  {name:"Ayan Shah", text:"Hmm… I have an idea to settle this equally. We can play a game."},
+  {name:"Osaka", text:"Unless we fight over crumbs… I have my juggling wrappers ready."},
+  {name:"Tahir", text:"POTATO!!!"},
+  {name:"Ayaan Asif", text:"Wait… let's spice it up. Everyone does a mini-challenge first."},
+  {name:"System", text:"Ayan Shah spins in circles, Osaka juggles wrappers, Tahir yells potato 7 times, Zayan trips over a chair, Ayaan Asif accidentally hits himself with a sink. Chaos everywhere."},
+  {name:"Zayan (You)", text:"Alright… okay, enough. Let’s just do the game already."},
+  {name:"Ayaan Asif", text:"Fine. But the real challenge is coming next… Potato Run!"},
+  {name:"Ayan Shah", text:"To settle this fairly… we play a game. Catch 15 boxes, miss 8 and you lose."},
+  {type:"game", name:"System", text:"Game starting: Box Catch!"},
+  // Box Catch win
+  {branch:"win", name:"System", text:"You crushed it! You earned cake rights."},
+  {branch:"win", name:"Tahir", text:"potato!"},
+  {branch:"win", name:"Ayan Shah", text:"Hold up. One more trial. The Potato Run."},
+  {branch:"win", name:"System", text:"Jump over 15 potatoes with SPACE. Miss once and you lose."},
+  {type:"potatorun", name:"System", text:"Game starting: Potato Run!"},
+  // Potato Run win
+  {branch:"potatowin", name:"System", text:"You gracefully dodged every potato. Victory achieved."},
+  {branch:"potatowin", name:"Tahir", text:"POTATO!!!"},
+  {branch:"potatowin", name:"System", text:"You step forward to finally grab your slice of cake…"},
+  {branch:"potatowin", name:"System", text:"The plate is empty."},
+  {branch:"potatowin", name:"Zayan (You)", text:"Wait… where’s my cake?"},
+  {branch:"potatowin", name:"System", text:"The room falls silent. A slow clap echoes…"},
+  {branch:"potatowin", name:"Owais", text:"Heh. That’s cute. Did you really think cake survives in my presence?"},
+  {branch:"potatowin", name:"Ayaan Asif", text:"No way…"},
+  {branch:"potatowin", name:"Owais", text:"Yes way. I ate ALL the slices. Frosting, crumbs, even the knife."},
+  {branch:"potatowin", name:"Osaka", text:"Bro actually ate stainless steel."},
+  {branch:"potatowin", name:"Pablo", text:"No wonder he has evil cholesterol."},
+  {branch:"potatowin", name:"Zayan (You)", text:"…Why?"},
+  {branch:"potatowin", name:"Owais", text:"Because I am hunger incarnate. The Cake Reaper. The Buttercream Menace."},
+  {branch:"potatowin", name:"Tahir", text:"potato."},
+  {branch:"potatowin", name:"Ayan Shah", text:"Alright, that’s it. *shoots Owais with a T1E3 rifle 98 times*"},
+  {branch:"potatowin", name:"Owais", text:"*Eats all 98 bullets* …got any salsa?"},
+  {branch:"potatowin", name:"System", text:"Everyone freezes in shock. Even the floor is questioning reality."},
+  {branch:"potatowin", name:"Ayaan Asif", text:"Bro actually ate the bullets."},
+  {branch:"potatowin", name:"System", text:"Owais lets out a thunderous fart. Windows shatter. Lights flicker. A dog cries."},
+  {branch:"potatowin", name:"Owais", text:"And now… my exit."},
+  {branch:"potatowin", name:"System", text:"Owais levitates, fart-powered, through the ceiling. He is gone."},
+  {branch:"potatowin", name:"Zayan (You)", text:"…so no cake?"},
+  {branch:"potatowin", name:"Tahir", text:"POTATO!!!"},
+  {branch:"potatowin", name:"System", text:"Owais was then shot down by US Air Force because they mistook him for a cross country fighter jet"},
+  // Happy Bday ending
+  {branch:"potatowin", name:"HappyBday", text:"🎉 Happy Bday! 🎉", type:"ending"},
+  // Box Catch lose
+  {branch:"lose", name:"System", text:"You failed to catch enough boxes. No cake yet."},
+  {branch:"lose", name:"Zayan (You)", text:"Nah… run it back, I need my slice."},
+  // Potato Run lose
+  {branch:"potatolose", name:"System", text:"A potato hit you. That’s embarrassing. Try again."}
+];
+
+/* ---------------- NAV ---------------- */
+
+let index = 0, branch = null;
+const nameBox = document.getElementById("name"),
+      textBox = document.getElementById("text"),
+      nextBtn = document.getElementById("nextBtn"),
+      backBtn = document.getElementById("backBtn"),
+      gameWrap = document.getElementById("gameCanvasWrap"),
+      canvas = document.getElementById("gameCanvas"),
+      ctx = canvas.getContext("2d"),
+      scoreEl = document.getElementById("score"),
+      missesEl = document.getElementById("misses"),
+      replayBtn = document.getElementById("replayBtn"),
+      returnStoryBtn = document.getElementById("returnStoryBtn"),
+      potatoWrap = document.getElementById("potatoRunWrap");
+
+function showLine(i){
+  const line = story[i];
+  if(!line) return;
+  index = i;
+  nameBox.textContent = line.name || "";
+  // if it's a game trigger
+  if(line.type === "game"){
+    // disable navigation while game runs
+    nextBtn.disabled = true;
+    backBtn.disabled = true;
+    // ensure story text area is cleared before starting
+    textBox.textContent = "";
+    startGame();
+    return;
+  }
+  if(line.type === "potatorun"){
+    nextBtn.disabled = true;
+    backBtn.disabled = true;
+    textBox.textContent = "";
+    potatoStart();
+    return;
+  }
+  if(line.type === "ending"){
+    nextBtn.style.display = "none";
+    backBtn.style.display = "none";
+    const endingText = document.createElement("div");
+    endingText.style.fontSize = "1.8rem";
+    endingText.style.fontWeight = "700";
+    endingText.style.color = "#ffd166";
+    endingText.style.textAlign = "center";
+    endingText.style.marginTop = "20px";
+    document.getElementById("gameWrap").appendChild(endingText);
+    // type ending, then add restart button
+    typeText(endingText, line.text, ()=>{
+      const restartBtn = document.createElement("button");
+      restartBtn.textContent = "Restart Story";
+      restartBtn.style.marginTop = "12px";
+      restartBtn.onclick = ()=>{ location.reload(); };
+      document.getElementById("gameWrap").appendChild(restartBtn);
+    });
+    return;
+  }
+
+  // normal text line: hide games
+  gameWrap.style.display = "none";
+  potatoWrap.style.display = "none";
+
+  // type text; when done set nav state
+  typeText(textBox, line.text, ()=>{
+    // re-enable navigation after typing
+    nextBtn.disabled = false;
+    backBtn.disabled = (index === 0);
+  });
+}
+
+nextBtn.addEventListener("click", ()=>{
+  // if currently typing, jump to end of that text instead of queueing
+  if(_isTyping){
+    // finish immediately
+    if(_typingInterval) clearInterval(_typingInterval);
+    _typingInterval = null;
+    // fast-forward the text content to full
+    const current = story[index];
+    if(current) textBox.textContent = current.text;
+    _isTyping = false;
+    nextBtn.disabled = false;
+    backBtn.disabled = (index === 0);
+    return;
+  }
+
+  const curr = story[index];
+  if(curr && (curr.type === "game" || curr.type === "potatorun") && branch){
+    jumpBranch(branch);
+    return;
+  }
+  let ni = index + 1;
+  // skip lines that are for another branch
+  while(story[ni] && story[ni].branch && story[ni].branch !== branch) ni++;
+  showLine(ni);
+});
+
+backBtn.addEventListener("click", ()=>{
+  if(_isTyping){
+    if(_typingInterval) clearInterval(_typingInterval);
+    _typingInterval = null;
+    const current = story[index];
+    if(current) textBox.textContent = current.text;
+    _isTyping = false;
+    nextBtn.disabled = false;
+    backBtn.disabled = (index === 0);
+    return;
+  }
+
+  let ni = index - 1;
+  while(ni > 0 && story[ni].branch && story[ni].branch !== branch) ni--;
+  if(ni < 0) ni = 0;
+  showLine(ni);
+});
+
+/* ---------------- BOX CATCH GAME ---------------- */
+
+let player = {x:210,y:300,w:80,h:18,speed:7},
+    boxes = [],
+    keys = {},
+    score = 0,
+    misses = 0,
+    gameRunning = false,
+    animId = null;
+
+const TARGET = 15, MISS_LIMIT = 8;
+
+window.addEventListener("keydown", e => {
+  // generic controls for box catch; ignore if input is space used for potato
+  if(e.key === " " || e.code === "Space") {
+    // don't set space in keys map here to avoid interfering with potato; handled separately
+    return;
+  }
+  keys[e.key.toLowerCase()] = true;
+});
+window.addEventListener("keyup", e => {
+  if(e.key === " " || e.code === "Space") return;
+  keys[e.key.toLowerCase()] = false;
+});
+
+function clampPlayer(){ if(player.x < 0) player.x = 0; if(player.x + player.w > canvas.width) player.x = canvas.width - player.w; }
+
+function startGame(){
+  score = 0; misses = 0; boxes = []; player.x = 200;
+  scoreEl.textContent = 0; missesEl.textContent = 0;
+  gameWrap.style.display = "flex";
+  replayBtn.style.display = "none";
+  returnStoryBtn.style.display = "none";
+  gameRunning = true;
+  branch = null; // clear any previous branch so nav works normally
+  animId = requestAnimationFrame(gameLoop);
+}
+
+function endGame(won){
+  gameRunning = false;
+  if(animId) cancelAnimationFrame(animId);
+  branch = won ? "win" : "lose";
+  if(won) returnStoryBtn.style.display = "inline-block";
+  else replayBtn.style.display = "inline-block";
+}
+
+function jumpBranch(which){
+  // go to the first story line with that branch
+  const start = story.findIndex(l => l.branch === which);
+  if(start >= 0) showLine(start);
+}
+
+function gameLoop(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  if(keys["arrowleft"] || keys["a"]) player.x -= player.speed;
+  if(keys["arrowright"] || keys["d"]) player.x += player.speed;
+  clampPlayer();
+
+  // spawn boxes randomly as original design - keep same feel
+  if(Math.random() < 0.07) boxes.push({
+    x: Math.random() * (canvas.width - 24),
+    y: 0,
+    w: 24,
+    h: 24,
+    vy: 1.5 + Math.random() * 1.2,
+    color: ["#e94560","#ffd166","#06d6a0","#118ab2","#ef476f"][Math.floor(Math.random()*5)]
+  });
+
+  for(let i = boxes.length - 1; i >= 0; i--){
+    let b = boxes[i];
+    b.y += b.vy;
+    // collision
+    if(b.y + b.h >= player.y && b.y <= player.y + player.h && b.x + b.w >= player.x && b.x <= player.x + player.w){
+      boxes.splice(i,1);
+      score++;
+      scoreEl.textContent = score;
+    } else if(b.y > canvas.height){
+      boxes.splice(i,1);
+      misses++;
+      missesEl.textContent = misses;
+    }
+  }
+
+  ctx.fillStyle = "#ffd166";
+  ctx.fillRect(player.x, player.y, player.w, player.h);
+  boxes.forEach(b => { ctx.fillStyle = b.color; ctx.fillRect(b.x, b.y, b.w, b.h); });
+
+  if(score >= TARGET){
+    endGame(true);
+    return;
+  }
+  if(misses >= MISS_LIMIT){
+    endGame(false);
+    return;
+  }
+
+  if(gameRunning) animId = requestAnimationFrame(gameLoop);
+}
+
+replayBtn.addEventListener("click", startGame);
+returnStoryBtn.addEventListener("click", ()=>{
+  gameWrap.style.display = "none";
+  jumpBranch("win");
+});
+
+/* ---------------- POTATO RUN GAME ---------------- */
+
+const potatoCanvas = document.getElementById("potatoCanvas");
+const pCtx = potatoCanvas.getContext("2d");
+const potatoScoreEl = document.getElementById("potatoScore");
+const potatoReplay = document.getElementById("potatoReplay");
+const potatoReturn = document.getElementById("potatoReturn");
+const potatoTarget = 15;
+
+let pPlayer = {x:50,y:200,w:32,h:32,vy:0,jumping:false};
+let potatoes = [], pScore = 0, pAnimId = null, pRunning = false;
+let lastPotatoSpawn = 0;
+const POTATO_SPAWN_INTERVAL = 750; // ms
+
+// deterministic spawn settings (one-by-one in order)
+const FIXED_POTATO_SPEED = 3.0;
+const FIXED_POTATO_W = 28, FIXED_POTATO_H = 28;
+const GROUND_Y = 200; // player's resting y
+
+function potatoStart(){
+  pPlayer.y = GROUND_Y;
+  pPlayer.vy = 0;
+  pPlayer.jumping = false;
+  potatoes = [];
+  pScore = 0;
+  potatoScoreEl.textContent = 0;
+  potatoWrap.style.display = "flex";
+  potatoReplay.style.display = "none";
+  potatoReturn.style.display = "none";
+  pRunning = true;
+  branch = null; // clear prior branch
+  // allow the first potato to spawn immediately
+  lastPotatoSpawn = performance.now() - POTATO_SPAWN_INTERVAL;
+  pAnimId = requestAnimationFrame(potatoLoop);
+}
+
+function potatoEnd(won){
+  pRunning = false;
+  if(pAnimId) cancelAnimationFrame(pAnimId);
+  branch = won ? "potatowin" : "potatolose";
+  if(won) potatoReturn.style.display = "inline-block";
+  else potatoReplay.style.display = "inline-block";
+}
+
+function potatoLoop(){
+  pCtx.clearRect(0,0,potatoCanvas.width,potatoCanvas.height);
+
+  // gravity and player vertical movement
+  pPlayer.vy += 0.7;
+  pPlayer.y += pPlayer.vy;
+  if(pPlayer.y >= GROUND_Y){
+    pPlayer.y = GROUND_Y;
+    pPlayer.vy = 0;
+    pPlayer.jumping = false;
+  }
+
+  // spawn exactly one potato at a time, deterministic speed
+  const now = performance.now();
+  if(potatoes.length === 0 && (now - lastPotatoSpawn) >= POTATO_SPAWN_INTERVAL){
+    potatoes.push({
+      x: potatoCanvas.width,
+      y: GROUND_Y + (pPlayer.h - FIXED_POTATO_H), // align potato vertically to be collidable
+      w: FIXED_POTATO_W,
+      h: FIXED_POTATO_H,
+      speed: FIXED_POTATO_SPEED
+    });
+    lastPotatoSpawn = now;
+    // (no randomness here) -- potatoes will come 1 by 1 at fixed interval
+  }
+
+  for(let i = potatoes.length - 1; i >= 0; i--){
+    let pt = potatoes[i];
+    pt.x -= pt.speed;
+
+    // simple AABB collision between player and potato
+    if(pt.x < pPlayer.x + pPlayer.w &&
+       pt.x + pt.w > pPlayer.x &&
+       pt.y < pPlayer.y + pPlayer.h &&
+       pt.y + pt.h > pPlayer.y){
+      // hit
+      potatoEnd(false);
+      return;
+    }
+
+    if(pt.x + pt.w < 0){
+      // passed: count as dodged
+      potatoes.splice(i,1);
+      pScore++;
+      potatoScoreEl.textContent = pScore;
+    } else {
+      pCtx.fillStyle = "#c08457";
+      pCtx.fillRect(pt.x, pt.y, pt.w, pt.h);
+    }
+  }
+
+  // draw player
+  pCtx.fillStyle = "#ffd166";
+  pCtx.fillRect(pPlayer.x, pPlayer.y, pPlayer.w, pPlayer.h);
+
+  if(pScore >= potatoTarget){
+    potatoEnd(true);
+    return;
+  }
+
+  if(pRunning) pAnimId = requestAnimationFrame(potatoLoop);
+}
+
+/* handle spacebar for jumping only when potato game running; prevent default to stop page scroll */
+window.addEventListener("keydown", e => {
+  if((e.code === "Space" || e.key === " ") && pRunning){
+    e.preventDefault();
+    if(!pPlayer.jumping){
+      pPlayer.vy = -12;
+      pPlayer.jumping = true;
+    }
+  }
+});
+
+// also avoid triggering jump when potato game not running (above checks ensure that)
+
+potatoReplay.addEventListener("click", potatoStart);
+potatoReturn.addEventListener("click", ()=>{
+  potatoWrap.style.display = "none";
+  jumpBranch("potatowin");
+});
+
+/* ---------------- INIT ---------------- */
+
+showLine(index);
+</script>
+</body>
+</html>
